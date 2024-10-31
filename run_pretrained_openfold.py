@@ -16,6 +16,7 @@ import argparse
 import logging
 import math
 import numpy as np
+import pandas as pd
 import os
 import pickle
 import random
@@ -56,6 +57,34 @@ from scripts.utils import add_data_args
 
 
 TRACING_INTERVAL = 50
+
+
+def get_msa_stats(
+    all_msa,
+    seq_length_1,
+    seq_length_2, prefix = ''
+):
+    num_recycle = all_msa.shape[-1]
+    res = pd.DataFrame(index= range(1, num_recycle+1))
+    res.index.name = "recycle_num"
+    for i in range(num_recycle):
+        batch_msa = all_msa[:, :, i]
+        mask = (batch_msa != 0).any(dim=1)
+        batch_msa = batch_msa[mask, :]
+        msa_1 = batch_msa[:, :seq_length_1]
+        msa_2 = batch_msa[:, seq_length_1:]
+        assert msa_2.shape[1] == seq_length_2
+        have_msa_1 = ~(msa_1 == 21).all(dim=1)
+        have_msa_2 = ~(msa_2 == 21).all(dim=1)
+        pair_msa = have_msa_1 & have_msa_2
+        unpair_msa_1 = have_msa_1 ^ pair_msa
+        unpair_msa_2 = have_msa_2 ^ pair_msa
+        res.loc[i+1, [prefix + j for j in ["paired", "unpaired_chain_1", "unpaired_chain_2"]]] = [
+            pair_msa.sum().item(),
+            unpair_msa_1.sum().item(),
+            unpair_msa_2.sum().item(),
+        ]
+    return res.astype(int)
 
 
 def precompute_alignments(tags, seqs, alignment_dir, args):
@@ -130,6 +159,7 @@ def generate_feature_dict(
     alignment_dir,
     data_processor,
     args,
+    template_save_dir
 ):
     tmp_fasta_path = os.path.join(args.output_dir, f"tmp_{os.getpid()}.fasta")
 
@@ -139,7 +169,7 @@ def generate_feature_dict(
                 '\n'.join([f">{tag}\n{seq}" for tag, seq in zip(tags, seqs)])
             )
         feature_dict = data_processor.process_fasta(
-            fasta_path=tmp_fasta_path, alignment_dir=alignment_dir,
+            fasta_path=tmp_fasta_path, alignment_dir=alignment_dir, template_info_save_dir=template_save_dir
         )
     elif len(seqs) == 1:
         tag = tags[0]
@@ -224,6 +254,7 @@ def main(args):
 
     data_processor = data_pipeline.DataPipeline(
         template_featurizer=template_featurizer,
+        enable_template=args.enable_template
     )
 
     if is_multimer:
@@ -249,6 +280,7 @@ def main(args):
 
     tag_list = []
     seq_list = []
+    file_list = []
     for fasta_file in list_files_with_extensions(args.fasta_dir, (".fasta", ".fa")):
         # Gather input sequences
         fasta_path = os.path.join(args.fasta_dir, fasta_file)
@@ -269,9 +301,10 @@ def main(args):
 
         tag_list.append((tag, tags))
         seq_list.append(seqs)
+        file_list.append(fasta_file.split(".")[0])
 
     seq_sort_fn = lambda target: sum([len(s) for s in target[1]])
-    sorted_targets = sorted(zip(tag_list, seq_list), key=seq_sort_fn)
+    sorted_targets = sorted(zip(tag_list, seq_list, file_list), key=seq_sort_fn)
     feature_dicts = {}
     model_generator = load_models_from_command_line(
         config,
@@ -282,10 +315,13 @@ def main(args):
 
     for model, output_directory in model_generator:
         cur_tracing_interval = 0
-        for (tag, tags), seqs in sorted_targets:
-            output_name = f'{tag}_{args.config_preset}'
-            if args.output_postfix is not None:
-                output_name = f'{output_name}_{args.output_postfix}'
+        for (tag, tags), seqs, file_name in sorted_targets:
+            # output_name = f'{tag}_{args.config_preset}'
+            # if args.output_postfix is not None:
+            #     output_name = f'{output_name}_{args.output_postfix}'
+            output_name = file_name
+            final_output_dir = os.path.join(output_directory, args.config_preset, output_name)
+            os.makedirs(final_output_dir, exist_ok=True)
 
             # Does nothing if the alignments have already been computed
             precompute_alignments(tags, seqs, alignment_dir, args)
@@ -298,6 +334,7 @@ def main(args):
                     alignment_dir,
                     data_processor,
                     args,
+                    final_output_dir
                 )
 
                 if args.trace_model:
@@ -317,6 +354,27 @@ def main(args):
                 k: torch.as_tensor(v, device=args.model_device)
                 for k, v in processed_feature_dict.items()
             }
+
+            # print(seqs)
+            # save msa and extra msa info
+            ## [508, cancat_seq_length, recycle_num]
+            msas = processed_feature_dict["true_msa"]
+            ## [2048, cancat_seq_length, recycle_num]
+            extra_msas = processed_feature_dict["extra_msa"]
+
+            seq_length_1, seq_length_2 = map(len, seqs)
+
+            msa_stats = pd.concat([get_msa_stats(msas, seq_length_1, seq_length_2), get_msa_stats(extra_msas, seq_length_1, seq_length_2, "extra_")], axis=1)
+
+            # with open(os.path.join(
+            #         final_output_dir, 'feature.pkl'
+            #     ), "wb") as f:
+            #     pickle.dump(feature_dict, f)
+
+            # with open(os.path.join(
+            #         final_output_dir, 'processed_feature.pkl'
+            #     ), "wb") as f:
+            #     pickle.dump(processed_feature_dict, f)
 
             if args.trace_model:
                 if rounded_seqlen > cur_tracing_interval:
@@ -350,11 +408,11 @@ def main(args):
                 args.subtract_plddt
             )
 
-            unrelaxed_file_suffix = "_unrelaxed.pdb"
+            unrelaxed_file_suffix = "unrelaxed.pdb"
             if args.cif_output:
-                unrelaxed_file_suffix = "_unrelaxed.cif"
+                unrelaxed_file_suffix = "unrelaxed.cif"
             unrelaxed_output_path = os.path.join(
-                output_directory, f'{output_name}{unrelaxed_file_suffix}'
+                final_output_dir, unrelaxed_file_suffix
             )
 
             with open(unrelaxed_output_path, 'w') as fp:
@@ -368,15 +426,21 @@ def main(args):
             if not args.skip_relaxation:
                 # Relax the prediction.
                 logger.info(f"Running relaxation on {unrelaxed_output_path}...")
-                relax_protein(config, args.model_device, unrelaxed_protein, output_directory, output_name,
-                              args.cif_output)
+                relax_protein(config, args.model_device, unrelaxed_protein, output_directory, output_name, args.config_preset, args.cif_output)
 
             if args.save_outputs:
                 output_dict_path = os.path.join(
-                    output_directory, f'{output_name}_output_dict.pkl'
+                    final_output_dir, 'metric_dict.pkl'
                 )
+                output_metrics = {k:out[k] for k in ["plddt","ptm_score","iptm_score","predicted_aligned_error", "num_recycles"]}
+                output_metrics["num_alignments"] = feature_dict["num_alignments"]
+                output_metrics["num_templates"] = feature_dict["num_templates"]
                 with open(output_dict_path, "wb") as fp:
-                    pickle.dump(out, fp, protocol=pickle.HIGHEST_PROTOCOL)
+                    pickle.dump(output_metrics, fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+                msa_stats.iloc[:out['num_recycles'].item()].to_csv(os.path.join(
+                    final_output_dir, 'msa_stats.csv'
+                ))
 
                 logger.info(f"Model output written to {output_dict_path}...")
 
@@ -474,6 +538,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_deepspeed_evoformer_attention", action="store_true", default=False, 
         help="Whether to use the DeepSpeed evoformer attention layer. Must have deepspeed installed in the environment.",
+    )
+    parser.add_argument(
+        "--enable_template", action="store_true", default=False,
     )
     add_data_args(parser)
     args = parser.parse_args()

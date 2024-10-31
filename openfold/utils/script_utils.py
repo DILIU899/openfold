@@ -229,7 +229,7 @@ def prep_output(out, batch, feature_dict, feature_processor, config_preset, mult
     return unrelaxed_protein
 
 
-def relax_protein(config, model_device, unrelaxed_protein, output_directory, output_name, cif_output=False):
+def relax_protein(config, model_device, unrelaxed_protein, output_directory, output_name, model_prefix, cif_output=False):
     amber_relaxer = relax.AmberRelaxation(
         use_gpu=(model_device != "cpu"),
         **config.relax,
@@ -249,11 +249,11 @@ def relax_protein(config, model_device, unrelaxed_protein, output_directory, out
     update_timings({"relaxation": relaxation_time}, os.path.join(output_directory, "timings.json"))
 
     # Save the relaxed PDB.
-    suffix = "_relaxed.pdb"
+    suffix = "relaxed.pdb"
     if cif_output:
-        suffix = "_relaxed.cif"
+        suffix = "relaxed.cif"
     relaxed_output_path = os.path.join(
-        output_directory, f'{output_name}{suffix}'
+        output_directory, model_prefix, output_name, suffix
     )
     with open(relaxed_output_path, 'w') as fp:
         fp.write(struct_str)

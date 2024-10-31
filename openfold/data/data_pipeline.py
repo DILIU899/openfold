@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import logging
 import copy
 import collections
 import contextlib
@@ -31,15 +32,19 @@ from openfold.np import residue_constants, protein
 FeatureDict = MutableMapping[str, np.ndarray]
 TemplateSearcher = Union[hhsearch.HHSearch, hmmsearch.Hmmsearch]
 
+logging.basicConfig()
+logger = logging.getLogger(__file__)
+logger.setLevel(level=logging.INFO)
 
 def make_template_features(
     input_sequence: str,
     hits: Sequence[Any],
     template_featurizer: Any,
+    enable_template: bool
 ) -> FeatureDict:
     hits_cat = sum(hits.values(), [])
-    if(len(hits_cat) == 0 or template_featurizer is None):
-        template_features = empty_template_feats(len(input_sequence))
+    if(len(hits_cat) == 0 or template_featurizer is None) or (enable_template is False):
+        template_features = empty_template_feats(input_sequence)
     else:
         templates_result = template_featurizer.get_templates(
             query_sequence=input_sequence,
@@ -695,8 +700,10 @@ class DataPipeline:
     def __init__(
         self,
         template_featurizer: Optional[templates.TemplateHitFeaturizer],
+        enable_template: bool
     ):
         self.template_featurizer = template_featurizer
+        self.enable_template = enable_template
 
     def _parse_msa_data(
         self,
@@ -877,6 +884,7 @@ class DataPipeline:
             input_sequence,
             hits,
             self.template_featurizer,
+            self.enable_template
         )
 
         sequence_features = make_sequence_features(
@@ -932,7 +940,8 @@ class DataPipeline:
         template_features = make_template_features(
             input_sequence,
             hits,
-            self.template_featurizer
+            self.template_featurizer,
+            self.enable_template
         )
 
         sequence_embedding_features = {}
@@ -990,6 +999,7 @@ class DataPipeline:
             input_sequence,
             hits,
             self.template_featurizer,
+            self.enable_template
         )
 
         sequence_embedding_features = {}
@@ -1030,6 +1040,7 @@ class DataPipeline:
             input_sequence,
             hits,
             self.template_featurizer,
+            self.enable_template
         )
 
         sequence_embedding_features = {}
@@ -1126,6 +1137,7 @@ class DataPipeline:
                 seq,
                 hits,
                 self.template_featurizer,
+                self.enable_template
             )
             template_feature_list.append(template_features)
 
@@ -1186,6 +1198,11 @@ class DataPipelineMultimer:
                     chain_alignment_index
                 )
                 chain_features.update(all_seq_msa_features)
+            # all_seq_msa_features = self._all_seq_msa_features(
+            #     chain_alignment_dir,
+            #     chain_alignment_index
+            # )
+            # chain_features.update(all_seq_msa_features)
         return chain_features
 
     @staticmethod
@@ -1228,7 +1245,8 @@ class DataPipelineMultimer:
     def process_fasta(self,
                       fasta_path: str,
                       alignment_dir: str,
-                      alignment_index: Optional[Any] = None
+                      template_info_save_dir: str,
+                      alignment_index: Optional[Any] = None,
                       ) -> FeatureDict:
         """Creates features."""
         with open(fasta_path) as f:
@@ -1269,8 +1287,15 @@ class DataPipelineMultimer:
             all_chain_features[desc] = chain_features
             sequence_features[seq] = chain_features
 
-        all_chain_features = add_assembly_features(all_chain_features)
+        # to keep the dict name
+        for k,v in all_chain_features.items():
+            with open(os.path.join(template_info_save_dir,f"{k}_template.fasta"), "w") as f:
+                for temp_hit, temp_seq in zip(v["template_domain_names"], v["template_sequence"]):
+                    if temp_hit == '':
+                        break
+                    f.write(f">{temp_hit}\n{temp_seq}\n")
 
+        all_chain_features = add_assembly_features(all_chain_features)
         np_example = feature_processing_multimer.pair_and_merge(
             all_chain_features=all_chain_features,
         )

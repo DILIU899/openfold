@@ -280,7 +280,8 @@ def sample_msa(batch, max_seq, max_extra_msa_seq, seed, inf=1e6):
         )
     else:
         cluster_bias_mask = batch['cluster_bias_mask']
-
+    
+    # the original sequence will always be sampled
     logits += cluster_bias_mask * inf
     index_order = gumbel_argsort_sample_idx(logits, generator=g)
     sel_idx = index_order[:max_seq]

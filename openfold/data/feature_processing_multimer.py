@@ -28,7 +28,7 @@ REQUIRED_FEATURES = frozenset({
     'all_crops_all_chains_mask', 'all_crops_all_chains_positions',
     'all_crops_all_chains_residue_ids', 'assembly_num_chains', 'asym_id',
     'bert_mask', 'cluster_bias_mask', 'deletion_matrix', 'deletion_mean',
-    'entity_id', 'entity_mask', 'mem_peak', 'msa', 'msa_mask', 'num_alignments',
+    'entity_id', 'entity_mask', 'mem_peak', 'msa', 'msa_mask', 'num_alignments', 
     'num_templates', 'queue_size', 'residue_index', 'resolution',
     'seq_length', 'seq_mask', 'sym_id', 'template_aatype',
     'template_all_atom_mask', 'template_all_atom_positions'
@@ -66,9 +66,11 @@ def pair_and_merge(
   pair_msa_sequences = not _is_homomer_or_monomer(np_chains_list)
 
   if pair_msa_sequences:
+    # paired features stored in those end in `_all_seq`
     np_chains_list = msa_pairing.create_paired_features(
         chains=np_chains_list
     )
+    # separate the msas, delete those in `_all_seq` from separate msa records
     np_chains_list = msa_pairing.deduplicate_unpaired_sequences(np_chains_list)
   np_chains_list = crop_chains(
       np_chains_list,
@@ -80,6 +82,7 @@ def pair_and_merge(
       np_chains_list=np_chains_list, pair_msa_sequences=pair_msa_sequences,
       max_templates=MAX_TEMPLATES
   )
+  # print(np_example.keys())
   np_example = process_final(np_example)
   return np_example
 
@@ -111,7 +114,7 @@ def crop_chains(
         pair_msa_sequences=pair_msa_sequences,
         max_templates=max_templates)
     cropped_chains.append(cropped_chain)
-
+    print("From `crop_chains`: num_alignments", chain["num_alignments"], "num_alignments_all_seq", chain.get("num_alignments_all_seq"))
   return cropped_chains
 
 

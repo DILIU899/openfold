@@ -33,6 +33,9 @@ from openfold.data.tools import kalign
 from openfold.data.tools.utils import to_date
 from openfold.np import residue_constants
 
+logging.basicConfig()
+logger = logging.getLogger(__file__)
+logger.setLevel(level=logging.INFO)
 
 class NoChainsError(Error):
     """An error indicating that template mmCIF didn't have any chains."""
@@ -89,7 +92,9 @@ TEMPLATE_FEATURES = {
 }
 
 
-def empty_template_feats(n_res):
+def empty_template_feats(query_sequence):
+    logger.info("Use empty template feature for: %s", query_sequence)
+    n_res = len(query_sequence)
     return {
         "template_aatype": np.zeros(
             (0, n_res, len(residue_constants.restypes_with_x_and_gap)),
@@ -101,8 +106,8 @@ def empty_template_feats(n_res):
         "template_all_atom_positions": np.zeros(
             (0, n_res, residue_constants.atom_type_num, 3), np.float32
         ),
-        "template_domain_names": np.array([''.encode()], dtype=object),
-        "template_sequence": np.array([''.encode()], dtype=object),
+        "template_domain_names": np.array([''], dtype=object),
+        "template_sequence": np.array([''], dtype=object),
         "template_sum_probs": np.zeros((0, 1), dtype=np.float32),
     }
 
@@ -696,9 +701,9 @@ def _extract_template_features(
                 templates_all_atom_positions
             ),
             "template_all_atom_mask": np.array(templates_all_atom_masks),
-            "template_sequence": output_templates_sequence.encode(),
+            "template_sequence": output_templates_sequence,
             "template_aatype": np.array(templates_aatype),
-            "template_domain_names": f"{pdb_id.lower()}_{chain_id}".encode(),
+            "template_domain_names": f"{pdb_id.lower()}_{chain_id}",
         },
         warning,
     )
@@ -1194,7 +1199,7 @@ class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
         query_sequence: str,
         hits: Sequence[parsers.TemplateHit]
     ) -> TemplateSearchResult:
-        logging.info("Searching for template for: %s", query_sequence)
+        logger.info("Searching for template for: %s", query_sequence)
 
         template_features = {}
         for template_feature_name in TEMPLATE_FEATURES:
@@ -1259,7 +1264,7 @@ class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
                 warnings.append(result.warning)
 
             if result.features is None:
-                logging.debug(
+                logger.debug(
                     "Skipped invalid hit %s, error: %s, warning: %s",
                     hit.name, result.error, result.warning,
                 )

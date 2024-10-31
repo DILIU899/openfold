@@ -360,6 +360,7 @@ class AlphaFold(nn.Module):
                     )
 
         # Embed extra MSA features + merge with pairwise embeddings
+        # true
         if self.config.extra_msa.enabled:
             if self.globals.is_multimer:
                 extra_msa_fn = data_transforms_multimer.build_extra_msa_feat

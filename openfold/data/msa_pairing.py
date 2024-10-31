@@ -84,6 +84,7 @@ def create_paired_features(
           new_chain[feature_name] = feats_padded[paired_rows[:, chain_num]]
       new_chain['num_alignments_all_seq'] = np.asarray(
           len(paired_rows[:, chain_num]))
+      # print("From `create_paired_features`: num_alignments_all_seq:", new_chain['num_alignments_all_seq'])
       updated_chains.append(new_chain)
     return updated_chains
 
@@ -282,6 +283,7 @@ def _correct_post_merged_feats(
         np_example['msa'].shape[0],
         dtype=np.int32
     )
+    print("From `_correct_post_merged_feats`: num_alignments", np_example['num_alignments'])
 
     if not pair_msa_sequences:
       # Generate a bias that is 1 for the first row of every block in the
@@ -372,8 +374,10 @@ def _merge_features_from_multiple_chains(
     feature_name_split = feature_name.split('_all_seq')[0]
     if feature_name_split in MSA_FEATURES:
       if pair_msa_sequences or '_all_seq' in feature_name:
+        # if paired, then concat feature from two chains
         merged_example[feature_name] = np.concatenate(feats, axis=1)
       else:
+        # if not paired, diag those from each chain
         merged_example[feature_name] = block_diag(
             *feats, pad_value=MSA_PAD_VALUES[feature_name])
     elif feature_name_split in SEQ_FEATURES:
@@ -422,10 +426,16 @@ def _concatenate_paired_and_unpaired_features(
     if feature_name in example:
       feat = example[feature_name]
       feat_all_seq = example[feature_name + '_all_seq']
+      if feature_name == "msa":
+        print("From `_concatenate_paired_and_unpaired_features`: separate msa", feat.shape)
+        print("From `_concatenate_paired_and_unpaired_features`: paired msa", feat_all_seq.shape)
       merged_feat = np.concatenate([feat_all_seq, feat], axis=0)
       example[feature_name] = merged_feat
   example['num_alignments'] = np.array(example['msa'].shape[0],
                                        dtype=np.int32)
+  # print("From `_concatenate_paired_and_unpaired_features`: num_alignments", example['num_alignments'])
+  # print("From `_concatenate_paired_and_unpaired_features`: num_alignments_all_seq", example.get('num_alignments_all_seq'))
+
   return example
 
 
@@ -450,6 +460,7 @@ def merge_chain_features(np_chains_list: List[Mapping[str, np.ndarray]],
   np_example = _merge_features_from_multiple_chains(
       np_chains_list, pair_msa_sequences=False)
   if pair_msa_sequences:
+    # add extra feature from all_seq
     np_example = _concatenate_paired_and_unpaired_features(np_example)
   np_example = _correct_post_merged_feats(
       np_example=np_example,
@@ -479,4 +490,5 @@ def deduplicate_unpaired_sequences(
       if feature_name in msa_features:
         chain[feature_name] = chain[feature_name][keep_rows]
     chain['num_alignments'] = np.array(chain['msa'].shape[0], dtype=np.int32)
+    # print("From `deduplicate_unpaired_sequences`: num_alignments:", chain['num_alignments'])
   return np_chains

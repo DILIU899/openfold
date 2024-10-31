@@ -85,6 +85,7 @@ def ensembled_transform_fns(common_cfg, mode_cfg, ensemble_seed):
     if mode_cfg.fixed_size:
         transforms.append(data_transforms.select_feat(list(crop_feats)))
 
+        # for inference, crop=False
         if mode_cfg.crop:
             transforms.append(
                 data_transforms_multimer.random_crop_to_size(
