@@ -413,21 +413,34 @@ def main(args):
                 )
 
             if args.save_outputs:
-                output_dict_path = os.path.join(final_output_dir, "metric_dict.pkl")
+                output_metric_dir = os.path.join(final_output_dir, "analysis")
+                os.makedirs(output_metric_dir, exist_ok=True)
+
+                # save metrics
                 output_metrics = {
                     k: out[k]
                     for k in ["plddt", "ptm_score", "iptm_score", "predicted_aligned_error", "num_recycles"]
                 }
                 output_metrics["num_alignments"] = feature_dict["num_alignments"]
                 output_metrics["num_templates"] = feature_dict["num_templates"]
-                with open(output_dict_path, "wb") as fp:
+                with open(os.path.join(output_metric_dir, "metric_dict.pkl"), "wb") as fp:
                     pickle.dump(output_metrics, fp, protocol=pickle.HIGHEST_PROTOCOL)
 
+                # save msa stats
                 msa_stats.iloc[: out["num_recycles"].item()].to_csv(
-                    os.path.join(final_output_dir, "msa_stats.csv")
+                    os.path.join(output_metric_dir, "msa_stats.csv")
                 )
 
-                logger.info(f"Model output written to {output_dict_path}...")
+                # save raw msa info
+                raw_msa = {
+                    "total_msa": total_msas,
+                    "msa_recycle": msas[:, :, : out["num_recycles"].item()],
+                    "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()],
+                }
+                with open(os.path.join(output_metric_dir, "metric_dict.pkl"), "wb") as fp:
+                    pickle.dump(raw_msa, fp)
+
+                logger.info(f"Model output written to {output_metric_dir}...")
 
 
 if __name__ == "__main__":
