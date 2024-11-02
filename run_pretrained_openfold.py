@@ -415,6 +415,8 @@ def main(args):
             if args.save_outputs:
                 output_metric_dir = os.path.join(final_output_dir, "analysis")
                 os.makedirs(output_metric_dir, exist_ok=True)
+                output_tmp_dir = os.path.join(final_output_dir, "tmp")
+                os.makedirs(output_tmp_dir, exist_ok=True)
 
                 # save metrics
                 output_metrics = {
@@ -437,7 +439,7 @@ def main(args):
                     "msa_recycle": msas[:, :, : out["num_recycles"].item()],
                     "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()],
                 }
-                with open(os.path.join(output_metric_dir, "metric_dict.pkl"), "wb") as fp:
+                with open(os.path.join(output_tmp_dir, "raw_msa.pkl"), "wb") as fp:
                     pickle.dump(raw_msa, fp)
 
                 logger.info(f"Model output written to {output_metric_dir}...")
