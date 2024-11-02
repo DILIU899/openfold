@@ -436,8 +436,8 @@ def main(args):
                 # save raw msa info
                 raw_msa = {
                     "total_msa": total_msas,
-                    "msa_recycle": msas[:, :, : out["num_recycles"].item()],
-                    "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()],
+                    "msa_recycle": msas[:, :, : out["num_recycles"].item()].cpu(),
+                    "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()].cpu(),
                 }
                 with open(os.path.join(output_tmp_dir, "raw_msa.pkl"), "wb") as fp:
                     pickle.dump(raw_msa, fp)
