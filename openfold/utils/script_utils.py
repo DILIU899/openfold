@@ -258,4 +258,4 @@ def relax_protein(config, model_device, unrelaxed_protein, output_directory, out
     with open(relaxed_output_path, 'w') as fp:
         fp.write(struct_str)
 
-    logger.info(f"Relaxed output written to {relaxed_output_path}...")
+    logger.debug(f"Relaxed output written to {relaxed_output_path}...")

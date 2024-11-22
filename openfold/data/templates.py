@@ -93,7 +93,7 @@ TEMPLATE_FEATURES = {
 
 
 def empty_template_feats(query_sequence):
-    logger.info("Use empty template feature for: %s", query_sequence)
+    logger.debug(f"Use empty template feature for: {query_sequence}")
     n_res = len(query_sequence)
     return {
         "template_aatype": np.zeros(

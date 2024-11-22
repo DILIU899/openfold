@@ -20,7 +20,11 @@ from typing import Iterable, MutableMapping, List, Mapping
 from openfold.data import msa_pairing
 from openfold.np import residue_constants
 import numpy as np
+import logging
 
+logging.basicConfig()
+logger = logging.getLogger(__file__)
+logger.setLevel(level=logging.INFO)
 
 # TODO: Move this into the config
 REQUIRED_FEATURES = frozenset({
@@ -114,7 +118,7 @@ def crop_chains(
         pair_msa_sequences=pair_msa_sequences,
         max_templates=max_templates)
     cropped_chains.append(cropped_chain)
-    print("From `crop_chains`: num_alignments", chain["num_alignments"], "num_alignments_all_seq", chain.get("num_alignments_all_seq"))
+    logger.debug(f"From `crop_chains`: num_alignments {chain['num_alignments']}, num_alignments_all_seq {chain.get('num_alignments_all_seq')}")
   return cropped_chains
 
 

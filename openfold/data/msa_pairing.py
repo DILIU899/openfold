@@ -18,6 +18,7 @@ import collections
 import functools
 import string
 from typing import Any, Dict, Iterable, List, Sequence, Mapping
+import logging
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,9 @@ import scipy.linalg
 
 from openfold.np import residue_constants
 
+logging.basicConfig()
+logger = logging.getLogger(__file__)
+logger.setLevel(level=logging.INFO)
 
 # TODO: This stuff should probably also be in a config
 MSA_GAP_IDX = residue_constants.restypes_with_x_and_gap.index('-')
@@ -283,7 +287,7 @@ def _correct_post_merged_feats(
         np_example['msa'].shape[0],
         dtype=np.int32
     )
-    print("From `_correct_post_merged_feats`: num_alignments", np_example['num_alignments'])
+    logger.debug(f"From `_correct_post_merged_feats`: num_alignments {np_example['num_alignments']}")
 
     if not pair_msa_sequences:
       # Generate a bias that is 1 for the first row of every block in the
@@ -427,8 +431,8 @@ def _concatenate_paired_and_unpaired_features(
       feat = example[feature_name]
       feat_all_seq = example[feature_name + '_all_seq']
       if feature_name == "msa":
-        print("From `_concatenate_paired_and_unpaired_features`: separate msa", feat.shape)
-        print("From `_concatenate_paired_and_unpaired_features`: paired msa", feat_all_seq.shape)
+        logger.debug(f"From `_concatenate_paired_and_unpaired_features`: separate msa {feat.shape}")
+        logger.debug(f"From `_concatenate_paired_and_unpaired_features`: paired msa {feat_all_seq.shape}")
       merged_feat = np.concatenate([feat_all_seq, feat], axis=0)
       example[feature_name] = merged_feat
   example['num_alignments'] = np.array(example['msa'].shape[0],

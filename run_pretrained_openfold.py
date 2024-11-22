@@ -21,6 +21,8 @@ import pickle
 import random
 import time
 from functools import partial
+import traceback
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -28,6 +30,10 @@ import pandas as pd
 logging.basicConfig()
 logger = logging.getLogger(__file__)
 logger.setLevel(level=logging.INFO)
+
+# unable warning info
+warnings.filterwarnings("ignore")
+logging.getLogger("root").setLevel(logging.ERROR)
 
 import torch
 
@@ -59,7 +65,7 @@ from scripts.utils import add_data_args
 TRACING_INTERVAL = 50
 
 
-def get_msa_stats(all_msa, seq_length_1, seq_length_2, num_recycle, prefix=""):
+def get_msa_stats(all_msa, seq_length_1, seq_length_2, num_recycle, if_homo, prefix=""):
     res = pd.DataFrame(index=range(1, num_recycle + 1))
     res.index.name = "recycle_num"
     for i in range(num_recycle):
@@ -70,8 +76,12 @@ def get_msa_stats(all_msa, seq_length_1, seq_length_2, num_recycle, prefix=""):
         mask = (batch_msa != 0).any(dim=1)
         batch_msa = batch_msa[mask, :]
         msa_1 = batch_msa[:, :seq_length_1]
-        msa_2 = batch_msa[:, seq_length_1:]
-        assert msa_2.shape[1] == seq_length_2
+        if not if_homo:
+            msa_2 = batch_msa[:, seq_length_1:]
+            assert msa_2.shape[1] == seq_length_2
+        else:
+            msa_2 = msa_1
+            assert batch_msa.shape[1] == seq_length_1
         have_msa_1 = ~(msa_1 == 21).all(dim=1)
         have_msa_2 = ~(msa_2 == 21).all(dim=1)
         pair_msa = have_msa_1 & have_msa_2
@@ -137,7 +147,7 @@ def precompute_alignments(tags, seqs, alignment_dir, args):
 
             alignment_runner.run(tmp_fasta_path, local_alignment_dir)
         else:
-            logger.info(f"Using precomputed alignments for {tag} at {alignment_dir}...")
+            logger.debug(f"Using precomputed alignments for {tag} at {alignment_dir}...")
 
         # Remove temporary FASTA file
         os.remove(tmp_fasta_path)
@@ -293,157 +303,164 @@ def main(args):
     for model, output_directory in model_generator:
         cur_tracing_interval = 0
         for (tag, tags), seqs, file_name in sorted_targets:
-            # output_name = f'{tag}_{args.config_preset}'
-            # if args.output_postfix is not None:
-            #     output_name = f'{output_name}_{args.output_postfix}'
-            output_name = file_name
-            final_output_dir = os.path.join(output_directory, args.config_preset, output_name)
-            os.makedirs(final_output_dir, exist_ok=True)
+            try:
+                # output_name = f'{tag}_{args.config_preset}'
+                # if args.output_postfix is not None:
+                #     output_name = f'{output_name}_{args.output_postfix}'
+                output_name = file_name
+                final_output_dir = os.path.join(output_directory, args.config_preset, output_name)
+                os.makedirs(final_output_dir, exist_ok=True)
 
-            # Does nothing if the alignments have already been computed
-            precompute_alignments(tags, seqs, alignment_dir, args)
+                logger.info(f"Inference for {file_name} start.")
+                # Does nothing if the alignments have already been computed
+                precompute_alignments(tags, seqs, alignment_dir, args)
 
-            feature_dict = feature_dicts.get(tag, None)
-            if feature_dict is None:
-                feature_dict = generate_feature_dict(
-                    tags, seqs, alignment_dir, data_processor, args, final_output_dir
-                )
-
-                if args.trace_model:
-                    n = feature_dict["aatype"].shape[-2]
-                    rounded_seqlen = round_up_seqlen(n)
-                    feature_dict = pad_feature_dict_seq(
-                        feature_dict,
-                        rounded_seqlen,
+                feature_dict = feature_dicts.get(tag, None)
+                if feature_dict is None:
+                    feature_dict = generate_feature_dict(
+                        tags, seqs, alignment_dir, data_processor, args, final_output_dir
                     )
 
-                feature_dicts[tag] = feature_dict
+                    if args.trace_model:
+                        n = feature_dict["aatype"].shape[-2]
+                        rounded_seqlen = round_up_seqlen(n)
+                        feature_dict = pad_feature_dict_seq(
+                            feature_dict,
+                            rounded_seqlen,
+                        )
 
-            processed_feature_dict = feature_processor.process_features(
-                feature_dict, mode="predict", is_multimer=is_multimer
-            )
+                    feature_dicts[tag] = feature_dict
 
-            processed_feature_dict = {
-                k: torch.as_tensor(v, device=args.model_device) for k, v in processed_feature_dict.items()
-            }
+                processed_feature_dict = feature_processor.process_features(
+                    feature_dict, mode="predict", is_multimer=is_multimer
+                )
 
-            # print(seqs)
-            # save msa and extra msa info
-            total_msas = torch.tensor(feature_dict["msa"])
-            ## [508, cancat_seq_length, recycle_num]
-            msas = processed_feature_dict["true_msa"]
-            ## [2048, cancat_seq_length, recycle_num]
-            extra_msas = processed_feature_dict["extra_msa"]
-            num_recycle = msas.shape[-1]
+                processed_feature_dict = {
+                    k: torch.as_tensor(v, device=args.model_device) for k, v in processed_feature_dict.items()
+                }
 
-            seq_length_1, seq_length_2 = map(len, seqs)
+                # print(seqs)
+                # save msa and extra msa info
+                total_msas = torch.tensor(feature_dict["msa"])
+                ## [508, cancat_seq_length, recycle_num]
+                msas = processed_feature_dict["true_msa"]
+                ## [2048, cancat_seq_length, recycle_num]
+                extra_msas = processed_feature_dict["extra_msa"]
+                num_recycle = msas.shape[-1]
 
-            get_msa_stats_ = partial(
-                get_msa_stats, seq_length_1=seq_length_1, seq_length_2=seq_length_2, num_recycle=num_recycle
-            )
+                seq_length_1, seq_length_2 = map(len, seqs)
+                # if_homo = seqs[0] == seqs[1]
+                if_homo = False
 
-            msa_stats = pd.concat(
-                [
-                    get_msa_stats_(all_msa=total_msas, prefix="total_"),
-                    get_msa_stats_(all_msa=msas, prefix=""),
-                    get_msa_stats_(all_msa=extra_msas, prefix="extra_"),
-                ],
-                axis=1,
-            )
+                get_msa_stats_ = partial(
+                    get_msa_stats, seq_length_1=seq_length_1, seq_length_2=seq_length_2, if_homo=if_homo, num_recycle=num_recycle
+                )
 
-            # with open(os.path.join(
-            #         final_output_dir, 'feature.pkl'
-            #     ), "wb") as f:
-            #     pickle.dump(feature_dict, f)
+                msa_stats = pd.concat(
+                    [
+                        get_msa_stats_(all_msa=total_msas, prefix="total_"),
+                        get_msa_stats_(all_msa=msas, prefix=""),
+                        get_msa_stats_(all_msa=extra_msas, prefix="extra_"),
+                    ],
+                    axis=1,
+                )
 
-            # with open(os.path.join(
-            #         final_output_dir, 'processed_feature.pkl'
-            #     ), "wb") as f:
-            #     pickle.dump(processed_feature_dict, f)
+                # with open(os.path.join(
+                #         final_output_dir, 'feature.pkl'
+                #     ), "wb") as f:
+                #     pickle.dump(feature_dict, f)
 
-            if args.trace_model:
-                if rounded_seqlen > cur_tracing_interval:
-                    logger.info(f"Tracing model at {rounded_seqlen} residues...")
-                    t = time.perf_counter()
-                    trace_model_(model, processed_feature_dict)
-                    tracing_time = time.perf_counter() - t
-                    logger.info(f"Tracing time: {tracing_time}")
-                    cur_tracing_interval = rounded_seqlen
+                # with open(os.path.join(
+                #         final_output_dir, 'processed_feature.pkl'
+                #     ), "wb") as f:
+                #     pickle.dump(processed_feature_dict, f)
 
-            out = run_model(model, processed_feature_dict, tag, args.output_dir)
+                if args.trace_model:
+                    if rounded_seqlen > cur_tracing_interval:
+                        logger.info(f"Tracing model at {rounded_seqlen} residues...")
+                        t = time.perf_counter()
+                        trace_model_(model, processed_feature_dict)
+                        tracing_time = time.perf_counter() - t
+                        logger.info(f"Tracing time: {tracing_time}")
+                        cur_tracing_interval = rounded_seqlen
 
-            # Toss out the recycling dimensions --- we don't need them anymore
-            processed_feature_dict = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), processed_feature_dict)
-            out = tensor_tree_map(lambda x: np.array(x.cpu()), out)
+                out = run_model(model, processed_feature_dict, tag, args.output_dir)
 
-            unrelaxed_protein = prep_output(
-                out,
-                processed_feature_dict,
-                feature_dict,
-                feature_processor,
-                args.config_preset,
-                args.multimer_ri_gap,
-                args.subtract_plddt,
-            )
+                # Toss out the recycling dimensions --- we don't need them anymore
+                processed_feature_dict = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), processed_feature_dict)
+                out = tensor_tree_map(lambda x: np.array(x.cpu()), out)
 
-            unrelaxed_file_suffix = "unrelaxed.pdb"
-            if args.cif_output:
-                unrelaxed_file_suffix = "unrelaxed.cif"
-            unrelaxed_output_path = os.path.join(final_output_dir, unrelaxed_file_suffix)
-
-            with open(unrelaxed_output_path, "w") as fp:
-                if args.cif_output:
-                    fp.write(protein.to_modelcif(unrelaxed_protein))
-                else:
-                    fp.write(protein.to_pdb(unrelaxed_protein))
-
-            logger.info(f"Output written to {unrelaxed_output_path}...")
-
-            if not args.skip_relaxation:
-                # Relax the prediction.
-                logger.info(f"Running relaxation on {unrelaxed_output_path}...")
-                relax_protein(
-                    config,
-                    args.model_device,
-                    unrelaxed_protein,
-                    output_directory,
-                    output_name,
+                unrelaxed_protein = prep_output(
+                    out,
+                    processed_feature_dict,
+                    feature_dict,
+                    feature_processor,
                     args.config_preset,
-                    args.cif_output,
+                    args.multimer_ri_gap,
+                    args.subtract_plddt,
                 )
 
-            if args.save_outputs:
-                output_metric_dir = os.path.join(final_output_dir, "analysis")
-                os.makedirs(output_metric_dir, exist_ok=True)
-                output_tmp_dir = os.path.join(final_output_dir, "tmp")
-                os.makedirs(output_tmp_dir, exist_ok=True)
+                unrelaxed_file_suffix = "unrelaxed.pdb"
+                if args.cif_output:
+                    unrelaxed_file_suffix = "unrelaxed.cif"
+                unrelaxed_output_path = os.path.join(final_output_dir, unrelaxed_file_suffix)
 
-                # save metrics
-                output_metrics = {
-                    k: out[k]
-                    for k in ["plddt", "ptm_score", "iptm_score", "predicted_aligned_error", "num_recycles"]
-                }
-                output_metrics["num_alignments"] = feature_dict["num_alignments"]
-                output_metrics["num_templates"] = feature_dict["num_templates"]
-                with open(os.path.join(output_metric_dir, "metric_dict.pkl"), "wb") as fp:
-                    pickle.dump(output_metrics, fp, protocol=pickle.HIGHEST_PROTOCOL)
+                with open(unrelaxed_output_path, "w") as fp:
+                    if args.cif_output:
+                        fp.write(protein.to_modelcif(unrelaxed_protein))
+                    else:
+                        fp.write(protein.to_pdb(unrelaxed_protein))
 
-                # save msa stats
-                msa_stats.iloc[: out["num_recycles"].item()].to_csv(
-                    os.path.join(output_metric_dir, "msa_stats.csv")
-                )
+                if not args.skip_relaxation:
+                    # Relax the prediction.
+                    logger.info(f"Running relaxation for {file_name}...")
+                    relax_protein(
+                        config,
+                        args.model_device,
+                        unrelaxed_protein,
+                        output_directory,
+                        output_name,
+                        args.config_preset,
+                        args.cif_output,
+                    )
 
-                # save raw msa info
-                raw_msa = {
-                    "total_msa": total_msas,
-                    "msa_recycle": msas[:, :, : out["num_recycles"].item()].cpu(),
-                    "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()].cpu(),
-                }
-                with open(os.path.join(output_tmp_dir, "raw_msa.pkl"), "wb") as fp:
-                    pickle.dump(raw_msa, fp)
+                if args.save_outputs:
+                    output_metric_dir = os.path.join(final_output_dir, "analysis")
+                    os.makedirs(output_metric_dir, exist_ok=True)
+                    output_tmp_dir = os.path.join(final_output_dir, "tmp")
+                    os.makedirs(output_tmp_dir, exist_ok=True)
 
-                logger.info(f"Model output written to {output_metric_dir}...")
+                    # save metrics
+                    output_metrics = {
+                        k: out[k]
+                        for k in ["plddt", "ptm_score", "iptm_score", "predicted_aligned_error", "num_recycles", "tm_logits"]
+                    }
+                    output_metrics["num_alignments"] = feature_dict["num_alignments"]
+                    output_metrics["num_templates"] = feature_dict["num_templates"]
+                    with open(os.path.join(output_metric_dir, "metric_dict.pkl"), "wb") as fp:
+                        pickle.dump(output_metrics, fp, protocol=pickle.HIGHEST_PROTOCOL)
 
+                    # save msa stats
+                    msa_stats.iloc[: out["num_recycles"].item()].to_csv(
+                        os.path.join(output_metric_dir, "msa_stats.csv")
+                    )
+
+                    # save raw msa info
+                    raw_msa = {
+                        "total_msa": total_msas,
+                        "msa_recycle": msas[:, :, : out["num_recycles"].item()].cpu(),
+                        "extra_msa_recycle": extra_msas[:, :, : out["num_recycles"].item()].cpu(),
+                    }
+                    with open(os.path.join(output_tmp_dir, "raw_msa.pkl"), "wb") as fp:
+                        pickle.dump(raw_msa, fp)
+
+                    logger.info(f"Output written to {final_output_dir}...")
+                    logger.info(f"Inference for {file_name} finish.\n")
+            except Exception as e:
+                logger.error(f"Error happens for {file_name}")
+                traceback.print_exc()
+                print()
+                continue
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
